@@ -1,0 +1,71 @@
+import 'package:flutter/foundation.dart';
+import '../models/wallet.dart';
+import '../repositories/wallet_repository.dart';
+
+class WalletProvider extends ChangeNotifier {
+  final WalletRepository _repo;
+  String userId;
+  WalletProvider(this._repo, this.userId);
+
+  List<Wallet> wallets = [];
+  bool isLoading = false;
+  bool isLoaded = false;
+  int totalBalance = 0;
+
+  void updateUser(String newUserId) {
+    if (userId != newUserId) {
+      userId = newUserId;
+      isLoaded = false;
+      wallets = [];
+      totalBalance = 0;
+      if (userId != '_none_') {
+        load();
+      } else {
+        notifyListeners();
+      }
+    }
+  }
+
+  Future<void> load() async {
+    isLoading = true;
+    notifyListeners();
+    try {
+      wallets = await _repo.getAll(userId);
+      totalBalance = await _repo.getTotalBalance(userId);
+      isLoaded = true;
+    } finally {
+      isLoading = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> addWallet({
+    required String name,
+    required String type,
+    int initialBalance = 0,
+    String? color,
+    String? icon,
+  }) async {
+    await _repo.create(
+        userId: userId,
+        walletName: name,
+        walletType: type,
+        initialBalance: initialBalance,
+        color: color,
+        icon: icon);
+    await load();
+  }
+
+  Future<void> editWallet(Wallet wallet) async {
+    await _repo.update(wallet);
+    await load();
+  }
+
+  Future<void> deleteWallet(String id) async {
+    await _repo.delete(id);
+    await load();
+  }
+
+  Future<WalletDeletePreview> previewDelete(String id) =>
+      _repo.previewDelete(id);
+}

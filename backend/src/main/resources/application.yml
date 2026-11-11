@@ -1,0 +1,31 @@
+# ..\personal-finance-app\backend\src\main\resources\application.yml
+
+spring:
+  application:
+    name: backend
+  datasource:
+    url: ${DB_URL}
+    username: ${DB_USER}
+    password: ${DB_PASSWORD}
+  jpa:
+    hibernate:
+      ddl-auto: none
+    open-in-view: false
+    properties:
+      hibernate.jdbc.time_zone: UTC
+      hibernate.type.preferred_instant_jdbc_type: TIMESTAMP
+  jackson:
+    property-naming-strategy: SNAKE_CASE
+  flyway:
+    enabled: true
+
+app:
+  jwt:
+    secret: ${JWT_SECRET}
+    expires-days: 7
+  gemini:
+    api-key: ${GEMINI_API_KEY:}
+    model: ${GEMINI_MODEL:gemini-3.1-flash-lite}
+    base-url: https://generativelanguage.googleapis.com/v1beta
+    fallback-model: ${GEMINI_FALLBACK_MODEL:gemini-3.5-flash-lite}
+    timeout-seconds: 15

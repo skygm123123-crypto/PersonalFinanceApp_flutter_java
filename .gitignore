@@ -1,0 +1,26 @@
+# Flutter
+frontend/build/
+frontend/.dart_tool/
+frontend/.flutter-plugins
+frontend/.flutter-plugins-dependencies
+frontend/.packages
+frontend/**/generated_plugin_registrant.dart
+
+# Spring Boot / Java
+backend/target/
+backend/*.class
+backend/HELP.md
+backend/.env
+backend/src/main/resources/application-local.yml
+.env
+application-local.yml
+
+# IDE
+.vscode/
+.idea/
+*.iml
+
+# OS
+.DS_Store
+
+backend/env-local.ps1

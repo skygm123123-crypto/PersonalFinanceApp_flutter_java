@@ -1,0 +1,706 @@
+openapi: 3.0.3
+info:
+  title: Personal Finance API
+  version: 1.6.0
+  description: |
+    Hợp đồng API duy nhất giữa Flutter và Spring Boot (auth, sync, tìm kiếm giao dịch và tính năng AI).
+    JSON snake_case theo tên cột; updated_at là UTC ISO-8601 mili-giây hậu tố Z;
+    ngày nghiệp vụ yyyy-MM-dd; tiền là số nguyên VND; UUID viết thường.
+servers:
+  - url: http://10.0.2.2:8080
+tags:
+  - name: Auth
+  - name: Sync
+  - name: Transactions
+  - name: AI
+security:
+  - bearerAuth: []
+
+paths:
+  /ai/chat:
+    post:
+      tags: [AI]
+      summary: Hỏi đáp về tài chính cá nhân
+      description: |
+        Server tự tổng hợp số liệu 3 tháng theo lịch (tháng hiện tại và 2 tháng trước) từ giao dịch đã đồng bộ;
+        AI chỉ diễn giải. Không gửi số dư và ghi chú giao dịch. Server không lưu hội thoại.
+        Tối đa 6 tin, tin cuối phải là USER. Dưới 5 giao dịch trả 200 INSUFFICIENT_DATA và không gọi AI.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ChatRequest' }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChatResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429':
+          description: AI_RATE_LIMITED
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '503':
+          description: AI_UNAVAILABLE
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /ai/suggestions:
+    post:
+      tags: [AI]
+      summary: Gợi ý thu chi cho tuần hoặc tháng kế tiếp
+      description: |
+        Server tự tính số liệu từ giao dịch đã đồng bộ (cửa sổ trượt 4x7 ngày cho WEEK,
+        3x30 ngày cho MONTH, kết thúc hôm nay theo Asia/Ho_Chi_Minh); AI chỉ diễn giải.
+        Thiếu dữ liệu trả 200 INSUFFICIENT_DATA và không gọi AI. Server không lưu kết quả.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SuggestionRequest' }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SuggestionResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429':
+          description: AI_RATE_LIMITED
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '503':
+          description: AI_UNAVAILABLE
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /ai/parse-text:
+    post:
+      tags: [AI]
+      summary: Phân tích tin nhắn thành đề xuất giao dịch
+      description: |
+        Tối đa 10 tin mỗi request. Server không lưu nội dung và che dữ liệu nhạy cảm trước khi gọi AI.
+        Danh mục không hợp lệ hoặc khác loại giao dịch được trả về dưới dạng null.
+        Ngày thiếu, sai định dạng hoặc ở tương lai được đặt thành hôm nay theo Asia/Ho_Chi_Minh.
+        Lỗi từng tin nằm trong results, không làm hỏng cả request.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ParseTextRequest' }
+      responses:
+        '200':
+          description: Kết quả theo thứ tự request
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ParseTextResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429':
+          description: AI_RATE_LIMITED, client giữ NEEDS_AI và thử lại sau
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '503':
+          description: AI_UNAVAILABLE, client giữ NEEDS_AI và thử lại sau
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /ai/parse-image:
+    post:
+      tags: [AI]
+      summary: Phân tích ảnh hóa đơn hoặc ảnh chụp tin nhắn thành đề xuất giao dịch
+      description: |
+        Một ảnh mỗi request, tối đa 3MB sau khi giải mã base64 (jpeg, png hoặc webp).
+        Server không lưu ảnh và không ghi log nội dung. Ghi chú AI trả về được che số nhạy cảm.
+        Hóa đơn nhiều món được ghi nhận thành một giao dịch theo tổng tiền.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ParseImageRequest' }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ParseImageResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429':
+          description: AI_RATE_LIMITED
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '503':
+          description: AI_UNAVAILABLE
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /transactions:
+    get:
+      tags: [Transactions]
+      summary: Tìm kiếm giao dịch của người dùng đang đăng nhập
+      description: |
+        Chỉ trả giao dịch chưa xóa của user trong JWT. Tìm kiếm theo ghi chú không phân biệt hoa thường;
+        ký tự đặc biệt của LIKE (% _ [) được coi là ký tự thường. Tìm kiếm phân biệt dấu tiếng Việt.
+      parameters:
+        - name: q
+          in: query
+          schema: { type: string, maxLength: 100 }
+        - name: type
+          in: query
+          schema: { $ref: '#/components/schemas/TxType' }
+        - name: wallet_id
+          in: query
+          schema: { type: string, format: uuid }
+        - name: category_id
+          in: query
+          schema: { type: string, format: uuid }
+        - name: from
+          in: query
+          schema: { type: string, format: date }
+        - name: to
+          in: query
+          schema: { type: string, format: date }
+        - name: min_amount
+          in: query
+          schema: { type: integer, format: int64, minimum: 1 }
+        - name: max_amount
+          in: query
+          schema: { type: integer, format: int64, minimum: 1 }
+        - name: page
+          in: query
+          schema: { type: integer, minimum: 0, default: 0 }
+        - name: size
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+      responses:
+        '200':
+          description: Trang giao dịch khớp bộ lọc, sắp xếp ngày giảm dần
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TransactionPage' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /auth/register:
+    post:
+      tags: [Auth]
+      security: []
+      summary: Đăng ký, cần mạng. id do client sinh
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RegisterRequest' }
+      responses:
+        '201':
+          description: Tạo mới thành công
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '409':
+          description: Trùng email (EMAIL_ALREADY_EXISTS) hoặc ID (ID_ALREADY_EXISTS)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /auth/login:
+    post:
+      tags: [Auth]
+      security: []
+      summary: Đăng nhập
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LoginRequest' }
+      responses:
+        '200':
+          description: Thành công
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401':
+          description: Sai thông tin, thông báo chung (code INVALID_CREDENTIALS)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /sync/push:
+    post:
+      tags: [Sync]
+      summary: Đẩy snapshot hiện tại của các bản ghi bẩn
+      description: |
+        Thứ tự xử lý cố định: wallets, categories, saving_goals, transactions, transfers,
+        monthly_budgets và scheduled_transactions. Mỗi bản ghi xử lý độc lập, push lặp lại là an toàn.
+        LWW theo updated_at; nếu updated_at > now + 5 phút thì ép về now.
+        Mỗi lần ghi server gán server_version. Không validate đủ số dư.
+        user_id trong bản ghi là tùy chọn; có mà khác user trong token thì REJECTED/INVALID.
+        Tối đa 500 bản ghi mỗi request.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PushRequest' }
+      responses:
+        '200':
+          description: Kết quả từng bản ghi
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PushResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /sync/pull:
+    get:
+      tags: [Sync]
+      summary: Kéo thay đổi có server_version lớn hơn cursor
+      description: |
+        Bao gồm scheduled_transactions. Client gộp mọi trang, áp dụng trong một transaction, rồi mới lưu cursor.
+        Cursor do server cấp, không phải timestamp; lần đầu là 0.
+        Chỉ trả bản ghi của user trong token, không trả danh mục hệ thống.
+      parameters:
+        - name: cursor
+          in: query
+          schema: { type: integer, format: int64, minimum: 0, default: 0 }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 500, default: 500 }
+      responses:
+        '200':
+          description: Một trang thay đổi, sắp theo server_version
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PullResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  responses:
+    Unauthorized:
+      description: Thiếu hoặc hết hạn token (code UNAUTHORIZED)
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    ValidationError:
+      description: Request sai cấu trúc (code VALIDATION_FAILED)
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  schemas:
+    ChatRequest:
+      type: object
+      required: [messages]
+      properties:
+        messages:
+          type: array
+          minItems: 1
+          maxItems: 6
+          items:
+            type: object
+            required: [role, content]
+            properties:
+              role: { type: string, enum: [USER, ASSISTANT] }
+              content: { type: string, minLength: 1, maxLength: 500 }
+    ChatResponse:
+      type: object
+      required: [status]
+      properties:
+        status: { type: string, enum: [OK, INSUFFICIENT_DATA] }
+        reply: { type: string, nullable: true }
+        message: { type: string, nullable: true }
+    SuggestionRequest:
+      type: object
+      required: [period_type]
+      properties:
+        period_type: { type: string, enum: [WEEK, MONTH] }
+    SuggestionResponse:
+      type: object
+      required: [status, period_type, period_start, period_end]
+      properties:
+        status: { type: string, enum: [OK, INSUFFICIENT_DATA] }
+        period_type: { type: string, enum: [WEEK, MONTH] }
+        period_start: { type: string, format: date }
+        period_end: { type: string, format: date }
+        content: { type: string, nullable: true }
+        data: { type: object, nullable: true, description: Số liệu do backend tính }
+        message: { type: string, nullable: true }
+    ParseTextRequest:
+      type: object
+      required: [items, categories]
+      properties:
+        items:
+          type: array
+          minItems: 1
+          maxItems: 10
+          items:
+            type: object
+            required: [ref, source, content]
+            properties:
+              ref: { type: string, minLength: 1, maxLength: 100 }
+              source: { type: string, enum: [SMS, TEXT] }
+              content: { type: string, minLength: 1, maxLength: 1000 }
+        categories:
+          type: array
+          maxItems: 100
+          items:
+            type: object
+            required: [id, category_name, type]
+            properties:
+              id: { type: string, format: uuid }
+              category_name: { type: string, maxLength: 100 }
+              type: { $ref: '#/components/schemas/TxType' }
+
+    ParseTextResponse:
+      type: object
+      required: [results]
+      properties:
+        results:
+          type: array
+          items:
+            type: object
+            required: [ref, status]
+            properties:
+              ref: { type: string, minLength: 1, maxLength: 100 }
+              status: { type: string, enum: [PARSED, NOT_A_TRANSACTION, FAILED] }
+              suggestion:
+                type: object
+                nullable: true
+                required: [amount, type, transaction_date, confidence]
+                properties:
+                  amount: { type: integer, format: int64, minimum: 1 }
+                  type: { $ref: '#/components/schemas/TxType' }
+                  transaction_date: { type: string, format: date }
+                  note: { type: string, nullable: true, maxLength: 80 }
+                  category_id: { type: string, format: uuid, nullable: true }
+                  confidence: { type: number, minimum: 0, maximum: 1 }
+    ParseImageRequest:
+      type: object
+      required: [image_base64, mime_type, categories]
+      properties:
+        image_base64: { type: string, maxLength: 4200000 }
+        mime_type: { type: string, enum: [image/jpeg, image/png, image/webp] }
+        categories:
+          type: array
+          maxItems: 100
+          items:
+            type: object
+            required: [id, category_name, type]
+            properties:
+              id: { type: string, format: uuid }
+              category_name: { type: string, maxLength: 100 }
+              type: { $ref: '#/components/schemas/TxType' }
+    ParseImageResponse:
+      type: object
+      required: [status]
+      properties:
+        status: { type: string, enum: [PARSED, NOT_A_TRANSACTION, FAILED] }
+        suggestion:
+          type: object
+          nullable: true
+          required: [amount, type, transaction_date, confidence]
+          properties:
+            amount: { type: integer, format: int64, minimum: 1 }
+            type: { $ref: '#/components/schemas/TxType' }
+            transaction_date: { type: string, format: date }
+            note: { type: string, nullable: true, maxLength: 80 }
+            category_id: { type: string, format: uuid, nullable: true }
+            confidence: { type: number, minimum: 0, maximum: 1 }
+    ErrorResponse:
+      type: object
+      required: [code, message]
+      properties:
+        code: { type: string }
+        message: { type: string }
+
+    RegisterRequest:
+      type: object
+      required: [id, full_name, email, password]
+      properties:
+        id: { type: string, format: uuid, description: UUID do client sinh }
+        full_name: { type: string, minLength: 1, maxLength: 100 }
+        email: { type: string, format: email, description: Server lưu lowercase }
+        password: { type: string, minLength: 6, maxLength: 72 }
+
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string }
+
+    AuthResponse:
+      type: object
+      required: [token, user]
+      properties:
+        token: { type: string }
+        user: { $ref: '#/components/schemas/UserInfo' }
+
+    TransactionPage:
+      type: object
+      required: [items, page, size, total_elements, total_pages]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/TransactionItem' }
+        page: { type: integer }
+        size: { type: integer }
+        total_elements: { type: integer, format: int64 }
+        total_pages: { type: integer }
+
+    TransactionItem:
+      type: object
+      required: [id, user_id, updated_at, is_deleted, wallet_id, type, amount, source, transaction_date, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        user_id: { type: string, format: uuid }
+        updated_at: { type: string, format: date-time }
+        is_deleted: { type: boolean }
+        wallet_id: { type: string, format: uuid }
+        category_id: { type: string, format: uuid, nullable: true }
+        type: { $ref: '#/components/schemas/TxType' }
+        amount: { type: integer, format: int64 }
+        note: { type: string, nullable: true }
+        source: { type: string }
+        transaction_date: { type: string, format: date }
+        created_at: { type: string, format: date-time }
+
+    UserInfo:
+      type: object
+      required: [id, full_name, email]
+      properties:
+        id: { type: string, format: uuid }
+        full_name: { type: string }
+        email: { type: string }
+
+    TxType:
+      type: string
+      enum: [INCOME, EXPENSE]
+
+    SyncBase:
+      type: object
+      required: [id, updated_at, is_deleted]
+      properties:
+        id: { type: string, format: uuid }
+        user_id: { type: string, format: uuid, description: Tùy chọn khi push; luôn có khi pull }
+        updated_at: { type: string, format: date-time }
+        is_deleted: { type: boolean }
+
+    ServerVersioned:
+      type: object
+      required: [server_version]
+      properties:
+        server_version: { type: integer, format: int64, readOnly: true }
+
+    WalletRecord:
+      allOf:
+        - $ref: '#/components/schemas/SyncBase'
+        - type: object
+          required: [wallet_name, wallet_type, opening_balance]
+          properties:
+            wallet_name: { type: string }
+            wallet_type: { type: string }
+            opening_balance: { type: integer, format: int64, description: Không gửi current_balance }
+            color: { type: string, nullable: true }
+            icon: { type: string, nullable: true }
+
+    CategoryRecord:
+      allOf:
+        - $ref: '#/components/schemas/SyncBase'
+        - type: object
+          required: [category_name, type]
+          properties:
+            category_name: { type: string }
+            type: { $ref: '#/components/schemas/TxType' }
+            color: { type: string, nullable: true }
+            icon: { type: string, nullable: true }
+
+    SavingGoalRecord:
+      allOf:
+        - $ref: '#/components/schemas/SyncBase'
+        - type: object
+          required: [goal_name, target_amount, status]
+          properties:
+            wallet_id: { type: string, format: uuid, nullable: true }
+            goal_name: { type: string }
+            target_amount: { type: integer, format: int64, minimum: 1 }
+            expected_completion_date: { type: string, format: date, nullable: true }
+            status: { type: string, description: Không gửi saved_amount }
+
+    TransactionRecord:
+      allOf:
+        - $ref: '#/components/schemas/SyncBase'
+        - type: object
+          required: [wallet_id, type, amount, source, transaction_date]
+          properties:
+            wallet_id: { type: string, format: uuid }
+            category_id: { type: string, format: uuid, nullable: true }
+            type: { $ref: '#/components/schemas/TxType' }
+            amount: { type: integer, format: int64, minimum: 1 }
+            note: { type: string, nullable: true }
+            source: { type: string, enum: [MANUAL, SMS, IMAGE, TEXT] }
+            transaction_date: { type: string, format: date }
+            created_at: { type: string, format: date-time, readOnly: true, description: Server gán }
+
+    TransferRecord:
+      allOf:
+        - $ref: '#/components/schemas/SyncBase'
+        - type: object
+          required: [source_wallet_id, destination_wallet_id, amount, transfer_date]
+          properties:
+            source_wallet_id: { type: string, format: uuid }
+            destination_wallet_id: { type: string, format: uuid }
+            goal_id: { type: string, format: uuid, nullable: true }
+            amount: { type: integer, format: int64, minimum: 1 }
+            transfer_date: { type: string, format: date }
+            note: { type: string, nullable: true }
+
+    MonthlyBudgetRecord:
+      allOf:
+        - $ref: '#/components/schemas/SyncBase'
+        - type: object
+          required: [category_id, month, spending_limit]
+          properties:
+            category_id: { type: string, format: uuid }
+            month: { type: string, pattern: '^\d{4}-(0[1-9]|1[0-2])$' }
+            spending_limit: { type: integer, format: int64, minimum: 1 }
+
+    ScheduledTransactionRecord:
+      allOf:
+        - $ref: '#/components/schemas/SyncBase'
+        - type: object
+          required: [wallet_id, type, amount, start_date, time_of_day]
+          properties:
+            wallet_id: { type: string, format: uuid }
+            category_id: { type: string, format: uuid, nullable: true, description: Danh mục đã xóa vẫn nhận, client ghi không danh mục khi xác nhận }
+            type: { $ref: '#/components/schemas/TxType' }
+            amount: { type: integer, format: int64, minimum: 1 }
+            note: { type: string, nullable: true }
+            start_date: { type: string, format: date, description: Mốc tính các kỳ lặp; server không chặn quá khứ }
+            time_of_day: { type: string, pattern: '^([01]\d|2[0-3]):[0-5]\d$', description: Giờ Asia/Ho_Chi_Minh }
+            repeat_unit: { type: string, enum: [DAY, WEEK, MONTH, YEAR], nullable: true, description: null = một lần }
+            repeat_every: { type: integer, minimum: 1, maximum: 365, nullable: true, description: Đi cùng repeat_unit }
+            end_date: { type: string, format: date, nullable: true, description: Chỉ khi có repeat_unit }
+            next_due_date: { type: string, format: date, nullable: true, description: Kỳ chưa xử lý gần nhất, null = hết kỳ }
+
+    PushRequest:
+      type: object
+      required: [records]
+      properties:
+        records:
+          type: object
+          properties:
+            wallets:
+              type: array
+              items: { $ref: '#/components/schemas/WalletRecord' }
+            categories:
+              type: array
+              items: { $ref: '#/components/schemas/CategoryRecord' }
+            saving_goals:
+              type: array
+              items: { $ref: '#/components/schemas/SavingGoalRecord' }
+            transactions:
+              type: array
+              items: { $ref: '#/components/schemas/TransactionRecord' }
+            transfers:
+              type: array
+              items: { $ref: '#/components/schemas/TransferRecord' }
+            monthly_budgets:
+              type: array
+              items: { $ref: '#/components/schemas/MonthlyBudgetRecord' }
+            scheduled_transactions:
+              type: array
+              items: { $ref: '#/components/schemas/ScheduledTransactionRecord' }
+
+    PushResponse:
+      type: object
+      required: [results]
+      properties:
+        results:
+          type: array
+          items: { $ref: '#/components/schemas/PushResult' }
+
+    PushResult:
+      type: object
+      required: [table, id, status]
+      properties:
+        table:
+          type: string
+          enum: [wallets, categories, saving_goals, transactions, transfers, monthly_budgets, scheduled_transactions]
+        id: { type: string, format: uuid }
+        status:
+          type: string
+          enum: [APPLIED, SKIPPED_NEWER, REJECTED]
+        reason:
+          type: string
+          nullable: true
+          enum: [PARENT_DELETED, FUTURE_DATE, INVALID]
+          description: |
+            PARENT_DELETED: client soft-delete bản ghi mồ côi và tính lại số dư.
+            INVALID: sai cấu trúc, sai chủ sở hữu, cha không tồn tại, amount <= 0,
+            goal.wallet_id không khớp destination_wallet_id.
+        message: { type: string, nullable: true, description: Mô tả để debug, client không phụ thuộc }
+
+    PullResponse:
+      type: object
+      required: [changes, next_cursor, has_more]
+      properties:
+        changes:
+          type: object
+          properties:
+            wallets:
+              type: array
+              items:
+                allOf:
+                  - $ref: '#/components/schemas/WalletRecord'
+                  - $ref: '#/components/schemas/ServerVersioned'
+            categories:
+              type: array
+              items:
+                allOf:
+                  - $ref: '#/components/schemas/CategoryRecord'
+                  - $ref: '#/components/schemas/ServerVersioned'
+            saving_goals:
+              type: array
+              items:
+                allOf:
+                  - $ref: '#/components/schemas/SavingGoalRecord'
+                  - $ref: '#/components/schemas/ServerVersioned'
+            transactions:
+              type: array
+              items:
+                allOf:
+                  - $ref: '#/components/schemas/TransactionRecord'
+                  - $ref: '#/components/schemas/ServerVersioned'
+            transfers:
+              type: array
+              items:
+                allOf:
+                  - $ref: '#/components/schemas/TransferRecord'
+                  - $ref: '#/components/schemas/ServerVersioned'
+            monthly_budgets:
+              type: array
+              items:
+                allOf:
+                  - $ref: '#/components/schemas/MonthlyBudgetRecord'
+                  - $ref: '#/components/schemas/ServerVersioned'
+            scheduled_transactions:
+              type: array
+              items:
+                allOf:
+                  - $ref: '#/components/schemas/ScheduledTransactionRecord'
+                  - $ref: '#/components/schemas/ServerVersioned'
+        next_cursor: { type: integer, format: int64 }
+        has_more: { type: boolean }

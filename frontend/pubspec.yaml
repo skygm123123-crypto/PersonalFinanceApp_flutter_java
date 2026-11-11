@@ -1,0 +1,63 @@
+name: personal_finance_app
+description: "Personal Finance Management App — Flutter + SQLite (offline-first), ready to sync with a Spring Boot backend."
+publish_to: "none"
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.3.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.6
+
+  # State management
+  provider: ^6.1.2
+
+  # Routing (route names double as future REST resource paths)
+  go_router: ^14.2.0
+
+  # Local persistence (offline-first, mirrors the SQL schema in DB_Flutter_Idea.md)
+  sqflite: ^2.3.3
+  path: ^1.9.0
+  path_provider: ^2.1.3
+
+  # IDs generated client-side so offline records never collide on sync (per design doc)
+  uuid: ^4.4.0
+
+  # Formatting
+  intl: ^0.19.0
+
+  # Future Spring Boot REST/sync integration
+  http: ^1.2.1
+
+  # HTTP client with interceptors for auth, logging, etc. (replaces http package once Spring Boot auth is wired in)
+  dio: ^5.11.1
+
+  # Password hashing for local (offline) auth — replaced by backend-issued
+  # JWT once Spring Boot auth is wired in
+  crypto: ^3.0.5
+
+  # Simple session/token storage
+  shared_preferences: ^2.2.3
+
+  # Dashboard charts (spending by category, etc.)
+  fl_chart: ^0.68.0
+
+  # SMS inbox access for OTP verification (Android only)
+  flutter_sms_inbox: ^1.0.5
+
+  # Permission handling for camera, storage, etc. (Android & iOS)
+  permission_handler: ^13.0.2
+  image_picker: ^1.2.4
+  flutter_local_notifications: ^22.3.3
+  timezone: ^0.11.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+  sqflite_common_ffi: ^2.3.3
+
+flutter:
+  uses-material-design: true
